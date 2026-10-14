@@ -27,26 +27,41 @@ async def get_workspace_history(
     workspace: CurrentWorkspaceDep,
     db: DBDep,
     limit: int = Query(50, ge=1, le=200),
+    query: Optional[str] = Query(None, description="Search term for question, answer, claim, or explanation"),
 ) -> HistoryListResponse:
     """
     Retrieve chronological investigation history (Q&A sessions and Claim verifications).
-    Strictly isolated to current workspace.
+    Strictly isolated to current workspace. Supports optional server-side search query.
     """
+    qa_conditions = [QueryRun.workspace_id == workspace.id]
+    if query and query.strip():
+        search_term = f"%{query.strip()}%"
+        qa_conditions.append(
+            (QueryRun.query_text.ilike(search_term)) | (Answer.answer_text.ilike(search_term))
+        )
+
     # 1. Fetch Q&A query runs
     qa_stmt = (
         select(QueryRun)
+        .outerjoin(Answer, QueryRun.id == Answer.query_run_id)
         .options(selectinload(QueryRun.answer).selectinload(Answer.citations))
-        .where(QueryRun.workspace_id == workspace.id)
+        .where(*qa_conditions)
         .order_by(QueryRun.created_at.desc())
         .limit(limit)
     )
     qa_runs = (await db.execute(qa_stmt)).scalars().all()
 
     # 2. Fetch Claim verifications
+    claim_conditions = [ClaimVerification.workspace_id == workspace.id]
+    if query and query.strip():
+        search_term = f"%{query.strip()}%"
+        claim_conditions.append(
+            (ClaimVerification.claim_text.ilike(search_term)) | (ClaimVerification.explanation.ilike(search_term))
+        )
     claim_stmt = (
         select(ClaimVerification)
         .options(selectinload(ClaimVerification.citations))
-        .where(ClaimVerification.workspace_id == workspace.id)
+        .where(*claim_conditions)
         .order_by(ClaimVerification.created_at.desc())
         .limit(limit)
     )
@@ -59,7 +74,11 @@ async def get_workspace_history(
         ans = qr.answer
         citations_list = [
             {
+                "id": c.id,
+                "chunk_id": c.chunk_id,
+                "document_id": c.document_id,
                 "document_name": c.filename,
+                "filename": c.filename,
                 "page_number": c.page_number,
                 "excerpt": c.excerpt,
                 "is_validated": c.is_validated,
@@ -87,7 +106,11 @@ async def get_workspace_history(
     for cv in claims:
         citations_list = [
             {
+                "id": c.id,
+                "chunk_id": c.chunk_id,
+                "document_id": c.document_id,
                 "document_name": c.filename,
+                "filename": c.filename,
                 "page_number": c.page_number,
                 "excerpt": c.excerpt,
             }

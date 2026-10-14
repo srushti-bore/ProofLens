@@ -19,12 +19,14 @@ interface ClaimVerificationPanelProps {
   documents: Document[];
   workspaceId: string;
   onOpenCitation: (citation: Citation) => void;
+  onQuerySuccess?: () => void;
 }
 
 export const ClaimVerificationPanel: React.FC<ClaimVerificationPanelProps> = ({
   documents,
   workspaceId,
   onOpenCitation,
+  onQuerySuccess,
 }) => {
   const [claimText, setClaimText] = useState('');
   const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
@@ -61,6 +63,9 @@ export const ClaimVerificationPanel: React.FC<ClaimVerificationPanelProps> = ({
         selectedDocIds.length > 0 ? selectedDocIds : undefined
       );
       setResult(res);
+      if (onQuerySuccess) {
+        onQuerySuccess();
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Claim verification failed');
     } finally {

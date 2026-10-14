@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Sparkles,
   ChevronDown,
@@ -9,6 +9,8 @@ import {
   Download,
   UploadCloud,
   Check,
+  Clock,
+  AlertCircle,
 } from 'lucide-react';
 import { Workspace, User } from '@/types';
 import { api } from '@/lib/api';
@@ -19,7 +21,8 @@ interface TopBarProps {
   workspaces: Workspace[];
   onSelectWorkspace: (ws: Workspace) => void;
   documentCount: number;
-  onOpenUpload: () => void;
+  onOpenUpload?: () => void;
+  onUploadSuccess?: () => void;
   currentUser: User | null;
   onOpenAuth: () => void;
 }
@@ -31,11 +34,63 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSelectWorkspace,
   documentCount,
   onOpenUpload,
+  onUploadSuccess,
   currentUser,
   onOpenAuth,
 }) => {
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUploadClick = () => {
+    if (!currentUser) {
+      onOpenAuth();
+      return;
+    }
+    if (!activeWorkspace) {
+      alert('Please create or select an active workspace before uploading documents.');
+      return;
+    }
+    if (documentCount >= 10) {
+      alert('Maximum workspace limit reached (10 documents). Please delete a document before uploading another.');
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeWorkspace) return;
+
+    if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+      alert('Invalid file format. Only PDF documents are supported for provenance extraction.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      alert('File exceeds the 15 MB maximum size limit.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadError(null);
+
+    try {
+      await api.documents.upload(activeWorkspace.id, file);
+      if (onUploadSuccess) onUploadSuccess();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Upload failed';
+      setUploadError(msg);
+      alert(`Upload failed: ${msg}`);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   const handleExportReport = async () => {
     if (!activeWorkspace) return;
@@ -206,9 +261,19 @@ export const TopBar: React.FC<TopBarProps> = ({
           <span>{exporting ? 'Exporting...' : 'Export chat'}</span>
         </button>
 
+        {/* Hidden File Input for Direct Upload */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          accept=".pdf,application/pdf"
+          onChange={handleFileChange}
+        />
+
         {/* Upgrade / + Upload PDF (Solid Black Pill Button) */}
         <button
-          onClick={onOpenUpload}
+          onClick={handleUploadClick}
+          disabled={isUploading}
           className="btn-dark"
           style={{
             padding: '7px 16px',
@@ -218,11 +283,22 @@ export const TopBar: React.FC<TopBarProps> = ({
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
+            opacity: isUploading ? 0.75 : 1,
+            cursor: isUploading ? 'not-allowed' : 'pointer',
           }}
           title="Ingest new PDF with PyMuPDF provenance"
         >
-          <UploadCloud size={14} />
-          <span>+ Upload PDF</span>
+          {isUploading ? (
+            <>
+              <Clock size={14} className="animate-spin" />
+              <span>Uploading...</span>
+            </>
+          ) : (
+            <>
+              <UploadCloud size={14} />
+              <span>+ Upload PDF</span>
+            </>
+          )}
         </button>
       </div>
     </header>

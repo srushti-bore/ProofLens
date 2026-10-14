@@ -117,3 +117,45 @@ async def test_history_and_report_tenant_isolation(client: AsyncClient):
     # User B attempts to export User A's report -> 403 Forbidden
     res_rep = await client.get(f"/api/v1/workspaces/{ws_a_id}/reports/export", headers=headers_b)
     assert res_rep.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_history_search_query_filtering(client: AsyncClient):
+    """Verify that history search accurately filters by search query term."""
+    auth_res = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "search_user@prooflens.ai", "password": "Password123!"},
+    )
+    token = auth_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    ws_id = (await client.get("/api/v1/workspaces", headers=headers)).json()[0]["id"]
+
+    pdf = create_synthetic_pdf(["Voyager 1 was launched on September 5, 1977."])
+    await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents/upload",
+        headers=headers,
+        files={"file": ("voyager.pdf", pdf, "application/pdf")},
+    )
+
+    await client.post(
+        f"/api/v1/workspaces/{ws_id}/qa/ask",
+        headers=headers,
+        json={"question": "When was Voyager 1 launched?"},
+    )
+    await client.post(
+        f"/api/v1/workspaces/{ws_id}/qa/ask",
+        headers=headers,
+        json={"question": "What is the speed of light in vacuum?"},
+    )
+
+    # Search for 'Voyager' -> should return 1 item
+    res_search = await client.get(f"/api/v1/workspaces/{ws_id}/history?query=Voyager", headers=headers)
+    assert res_search.status_code == 200
+    items = res_search.json()["items"]
+    assert len(items) >= 1
+    assert any("voyager" in item["title"].lower() for item in items)
+
+    # Search for nonexistent term -> should return 0 items
+    res_empty = await client.get(f"/api/v1/workspaces/{ws_id}/history?query=NonexistentTerm123", headers=headers)
+    assert res_empty.status_code == 200
+    assert len(res_empty.json()["items"]) == 0

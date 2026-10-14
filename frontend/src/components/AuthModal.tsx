@@ -17,13 +17,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onAuthSuccess,
 }) => {
   const [isRegister, setIsRegister] = useState(false);
-  const [email, setEmail] = useState('demo@prooflens.ai');
-  const [password, setPassword] = useState('DemoSecure123!');
-  const [fullName, setFullName] = useState('Demo Researcher');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const handleDemoLogin = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      let tokenRes;
+      try {
+        tokenRes = await api.auth.login('demo@prooflens.ai', 'DemoSecure123!');
+      } catch {
+        try {
+          tokenRes = await api.auth.register('demo@prooflens.ai', 'DemoSecure123!', 'Dr. Evelyn Vance');
+        } catch {
+          tokenRes = await api.auth.login('demo@prooflens.ai', 'DemoSecure123!');
+        }
+      }
+      api.setToken(tokenRes.access_token);
+      const user = await api.auth.getMe();
+      onAuthSuccess(user);
+      onClose();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Demo login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,7 +124,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <X size={18} />
         </button>
 
-        <div style={{ textAlign: 'center', marginBottom: 'var(--space-5)' }}>
+        <div style={{ textAlign: 'center', marginBottom: 'var(--space-4)' }}>
           <div
             style={{
               width: '42px',
@@ -120,9 +145,65 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </h2>
           <p style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', marginTop: 'var(--space-1)' }}>
             {isRegister
-              ? 'Get started with verifiable document intelligence.'
-              : 'Sign in to access your tenant-isolated workspace.'}
+              ? 'Create your dedicated, tenant-isolated account.'
+              : 'Sign in to access your private workspaces and documents.'}
           </p>
+        </div>
+
+        {/* Segmented Auth Tabs */}
+        <div
+          style={{
+            display: 'flex',
+            background: '#F4F4F5',
+            padding: '3px',
+            borderRadius: '10px',
+            marginBottom: 'var(--space-4)',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setIsRegister(false);
+              setError(null);
+            }}
+            style={{
+              flex: 1,
+              padding: '7px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              background: !isRegister ? '#FFFFFF' : 'transparent',
+              color: !isRegister ? '#18181B' : '#71717A',
+              boxShadow: !isRegister ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              fontWeight: !isRegister ? 600 : 500,
+              fontSize: '12px',
+              cursor: 'pointer',
+              transition: 'all 150ms ease',
+            }}
+          >
+            Sign In
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsRegister(true);
+              setError(null);
+            }}
+            style={{
+              flex: 1,
+              padding: '7px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              background: isRegister ? '#FFFFFF' : 'transparent',
+              color: isRegister ? '#18181B' : '#71717A',
+              boxShadow: isRegister ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              fontWeight: isRegister ? 600 : 500,
+              fontSize: '12px',
+              cursor: 'pointer',
+              transition: 'all 150ms ease',
+            }}
+          >
+            Create Account
+          </button>
         </div>
 
         {error && (
@@ -135,13 +216,38 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               borderRadius: 'var(--radius-sm)',
               fontSize: 'var(--text-xs)',
               display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-2)',
+              flexDirection: 'column',
+              gap: '6px',
               marginBottom: 'var(--space-4)',
             }}
           >
-            <AlertCircle size={15} />
-            <span>{error}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+              <AlertCircle size={15} style={{ flexShrink: 0 }} />
+              <span>{error}</span>
+            </div>
+            {!isRegister && error.toLowerCase().includes('incorrect email or password') && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRegister(true);
+                  setError(null);
+                }}
+                style={{
+                  alignSelf: 'flex-start',
+                  background: 'none',
+                  border: 'none',
+                  color: '#7C3AED',
+                  fontWeight: 600,
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                  padding: 0,
+                  textDecoration: 'underline',
+                  marginTop: '2px',
+                }}
+              >
+                Click here to create a new account with these credentials →
+              </button>
+            )}
           </div>
         )}
 
@@ -186,7 +292,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           <div>
             <label style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-secondary)', display: 'block', marginBottom: 'var(--space-1)' }}>
-              Password
+              {isRegister ? 'Password (minimum 8 characters)' : 'Password'}
             </label>
             <div style={{ position: 'relative' }}>
               <Lock size={15} color="var(--color-text-muted)" style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)' }} />
@@ -197,6 +303,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••••••"
+                minLength={isRegister ? 8 : undefined}
                 required
               />
             </div>
@@ -212,8 +319,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </button>
         </form>
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '14px 0 10px' }}>
+          <div style={{ flex: 1, height: '1px', backgroundColor: '#E4E4E7' }} />
+          <span style={{ fontSize: '11px', color: '#A1A1AA' }}>OR</span>
+          <div style={{ flex: 1, height: '1px', backgroundColor: '#E4E4E7' }} />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleDemoLogin}
+          disabled={loading}
+          className="btn-secondary"
+          style={{ width: '100%', padding: '10px 14px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+        >
+          <Sparkles size={14} color="#7C3AED" /> Try Demo Account
+        </button>
+
         <div style={{ textAlign: 'center', marginTop: 'var(--space-4)' }}>
           <button
+            type="button"
             onClick={() => {
               setIsRegister(!isRegister);
               setError(null);

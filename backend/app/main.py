@@ -26,7 +26,8 @@ async def lifespan(app: FastAPI):
         if engine.dialect.name == "postgresql":
             from sqlalchemy import text
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
-        await conn.run_sync(Base.metadata.create_all)
+        if settings.APP_ENV != "production":
+            await conn.run_sync(Base.metadata.create_all)
         
     yield
     
@@ -46,17 +47,10 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS configuration - supports both localhost and 127.0.0.1 in dev
+    # CORS configuration - environment configurable with safe dev defaults
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:3001",
-            "http://127.0.0.1:3001",
-            "http://localhost:8000",
-            "http://127.0.0.1:8000",
-        ],
+        allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

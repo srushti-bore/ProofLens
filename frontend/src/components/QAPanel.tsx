@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Citation, Document, QAAnswer } from '@/types';
 import { api } from '@/lib/api';
+import { FormattedAnswer } from './FormattedAnswer';
 
 interface Message {
   id: string;
@@ -37,6 +38,8 @@ interface QAPanelProps {
   onRefreshDocuments?: () => void;
   userName?: string;
   onSwitchTab?: (tab: 'qa' | 'documents' | 'claims' | 'comparison' | 'analytics') => void;
+  initialPrompt?: string;
+  onQuerySuccess?: () => void;
 }
 
 export const QAPanel: React.FC<QAPanelProps> = ({
@@ -46,6 +49,8 @@ export const QAPanel: React.FC<QAPanelProps> = ({
   onRefreshDocuments,
   userName = 'Jackson',
   onSwitchTab,
+  initialPrompt,
+  onQuerySuccess,
 }) => {
   const [query, setQuery] = useState('');
   const [deeperResearch, setDeeperResearch] = useState(true);
@@ -68,6 +73,17 @@ export const QAPanel: React.FC<QAPanelProps> = ({
     'How does ProofLens enforce workspace tenant data isolation?',
     'What happens when retrieved document evidence is insufficient?',
   ];
+
+  // Update query when initialPrompt is provided or cleared
+  useEffect(() => {
+    if (initialPrompt && initialPrompt.trim()) {
+      setQuery(initialPrompt);
+    } else if (initialPrompt === undefined) {
+      setMessages([]);
+      setQuery('');
+      setError(null);
+    }
+  }, [initialPrompt]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -115,6 +131,9 @@ export const QAPanel: React.FC<QAPanelProps> = ({
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      if (onQuerySuccess) {
+        onQuerySuccess();
+      }
     } catch (err: unknown) {
       const errorText = err instanceof Error ? err.message : 'Failed to query workspace';
       setError(errorText);
@@ -694,6 +713,8 @@ export const QAPanel: React.FC<QAPanelProps> = ({
                         boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
                         fontSize: '14px',
                         lineHeight: 1.6,
+                        maxWidth: '100%',
+                        overflowWrap: 'break-word',
                       }}
                     >
                       {/* Explicit Abstention Alert Banner */}
@@ -718,7 +739,7 @@ export const QAPanel: React.FC<QAPanelProps> = ({
                         </div>
                       )}
 
-                      <div>{msg.content}</div>
+                      <FormattedAnswer content={msg.content} isUser={isUser} />
 
                       {/* Assistant Verified Citations */}
                       {!isUser && msg.qaData && msg.qaData.citations && msg.qaData.citations.length > 0 && (

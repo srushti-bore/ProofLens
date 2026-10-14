@@ -4,7 +4,7 @@ Pydantic schemas for User registration, login, and authentication tokens.
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class UserRegister(BaseModel):
@@ -12,10 +12,24 @@ class UserRegister(BaseModel):
     password: str = Field(min_length=8, description="Password (minimum 8 characters)")
     full_name: Optional[str] = Field(default=None, description="User full name")
 
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
 
 class UserLogin(BaseModel):
     email: EmailStr = Field(description="User email address")
     password: str = Field(description="User password")
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
 
 class UserResponse(BaseModel):

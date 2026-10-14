@@ -659,3 +659,36 @@ html, body {
   }
 }
 
+/* AI Formatted Answer Readability */
+.formatted-answer {
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+.formatted-answer p {
+  line-height: var(--line-relaxed);
+  margin-bottom: 6px;
+}
+
+.formatted-answer p:last-child {
+  margin-bottom: 0;
+}
+
+.formatted-answer strong {
+  color: #111827;
+  font-weight: 650;
+}
+
+.formatted-answer code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.formatted-answer ul, .formatted-answer ol {
+  margin: 6px 0;
+}
+
+.formatted-answer li {
+  line-height: var(--line-body);
+}
+

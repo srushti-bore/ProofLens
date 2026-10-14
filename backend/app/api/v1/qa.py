@@ -68,7 +68,7 @@ async def ask_question(
         query_run_id=query_run.id,
         answer_text=synthesized.answer_text,
         status=synthesized.status,
-        confidence_score=synthesized.confidence_score,
+        confidence_score=0.0 if synthesized.status == "insufficient_evidence" else synthesized.confidence_score,
         retrieved_chunks_count=len(retrieved_chunks),
     )
     db.add(answer)

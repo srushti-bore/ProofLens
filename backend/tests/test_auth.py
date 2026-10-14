@@ -93,3 +93,68 @@ async def test_workspace_creation_and_isolation(client: AsyncClient):
     bob_get = await client.get(f"/api/v1/workspaces/{ws_id}", headers=headers_b)
     assert bob_get.status_code == 403
     assert "access" in bob_get.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_case_insensitive_email_and_independent_accounts(client: AsyncClient):
+    """
+    Test case-insensitivity and whitespace normalization in registration and login.
+    Verify that independent accounts maintain distinct workspaces and identities.
+    """
+    # 1. User A registers with mixed-case and whitespace
+    res_a = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "  Dr.Evelyn.Vance@ProofLens.AI  ", "password": "Password123!", "full_name": "Dr. Evelyn Vance"},
+    )
+    assert res_a.status_code == 201
+    token_a = res_a.json()["access_token"]
+    user_a = res_a.json()["user"]
+    assert user_a["email"] == "dr.evelyn.vance@prooflens.ai"
+
+    # 2. Duplicate registration with lowercase must be rejected
+    dup_res = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "dr.evelyn.vance@prooflens.ai", "password": "Password123!"},
+    )
+    assert dup_res.status_code == 400
+
+    # 3. User A logs in with all-lowercase and whitespace
+    login_a = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "dr.evelyn.vance@prooflens.ai ", "password": "Password123!"},
+    )
+    assert login_a.status_code == 200
+    assert "access_token" in login_a.json()
+
+    # 4. User B registers independently
+    res_b = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "Jackson.Reed@ProofLens.AI", "password": "Password123!", "full_name": "Jackson Reed"},
+    )
+    assert res_b.status_code == 201
+    token_b = res_b.json()["access_token"]
+    user_b = res_b.json()["user"]
+    assert user_b["email"] == "jackson.reed@prooflens.ai"
+
+    # 5. User B logs in with lowercase
+    login_b = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "jackson.reed@prooflens.ai", "password": "Password123!"},
+    )
+    assert login_b.status_code == 200
+
+    # 6. Verify distinct workspaces
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    ws_a_list = (await client.get("/api/v1/workspaces", headers=headers_a)).json()
+    ws_b_list = (await client.get("/api/v1/workspaces", headers=headers_b)).json()
+
+    assert len(ws_a_list) >= 1
+    assert len(ws_b_list) >= 1
+    ws_a_id = ws_a_list[0]["id"]
+    ws_b_id = ws_b_list[0]["id"]
+    assert ws_a_id != ws_b_id
+
+    # 7. Cross-workspace isolation
+    assert (await client.get(f"/api/v1/workspaces/{ws_a_id}", headers=headers_b)).status_code == 403
+    assert (await client.get(f"/api/v1/workspaces/{ws_b_id}", headers=headers_a)).status_code == 403

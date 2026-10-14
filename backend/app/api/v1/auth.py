@@ -4,7 +4,7 @@ Authentication routes for User registration, login, and profile access.
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.api.deps import CurrentUserDep, DBDep
@@ -19,8 +19,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 @router.post("/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 async def register(user_in: UserRegister, db: DBDep) -> Token:
     """Register a new user, create a default workspace, and issue a JWT token."""
-    # Check if user already exists
-    stmt = select(User).where(User.email == user_in.email)
+    # Check if user already exists (case-insensitive)
+    email_clean = user_in.email.strip().lower()
+    stmt = select(User).where(func.lower(User.email) == email_clean)
     existing_user = (await db.execute(stmt)).scalar_one_or_none()
     if existing_user:
         raise HTTPException(
@@ -28,11 +29,11 @@ async def register(user_in: UserRegister, db: DBDep) -> Token:
             detail="A user with this email address already exists",
         )
 
-    # Create user
+    # Create user with normalized email
     user = User(
-        email=user_in.email,
+        email=email_clean,
         hashed_password=get_password_hash(user_in.password),
-        full_name=user_in.full_name,
+        full_name=user_in.full_name.strip() if user_in.full_name else None,
     )
     db.add(user)
     await db.flush()
@@ -102,7 +103,8 @@ async def login(
             detail="Email and password are required",
         )
 
-    stmt = select(User).where(User.email == str(username).strip())
+    clean_username = str(username).strip().lower()
+    stmt = select(User).where(func.lower(User.email) == clean_username)
     user = (await db.execute(stmt)).scalar_one_or_none()
 
     if not user or not verify_password(str(password), user.hashed_password):
@@ -128,7 +130,8 @@ async def login(
 @router.post("/login/json", response_model=Token)
 async def login_json(credentials: UserLogin, db: DBDep) -> Token:
     """Alternative JSON body login endpoint."""
-    stmt = select(User).where(User.email == credentials.email)
+    clean_email = credentials.email.strip().lower()
+    stmt = select(User).where(func.lower(User.email) == clean_email)
     user = (await db.execute(stmt)).scalar_one_or_none()
 
     if not user or not verify_password(credentials.password, user.hashed_password):

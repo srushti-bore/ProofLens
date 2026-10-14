@@ -4,8 +4,8 @@ Uses pydantic-settings to validate all environment variables at startup.
 No secret values or changeable parameters are hardcoded.
 """
 
-from typing import Optional
-from pydantic import Field
+from typing import List, Optional
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +21,19 @@ class Settings(BaseSettings):
     APP_NAME: str = Field(default="ProofLens AI", description="Application name")
     API_V1_STR: str = Field(default="/api/v1", description="API v1 prefix")
     DEBUG: bool = Field(default=False, description="Debug mode flag")
+
+    # CORS
+    CORS_ORIGINS: List[str] = Field(
+        default=[
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ],
+        description="Allowed CORS origins list, environment-configurable",
+    )
 
     # Database
     DATABASE_URL: str = Field(
@@ -56,6 +69,18 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = Field(default=15, description="Maximum upload size in MB")
     MAX_DOCUMENTS_PER_WORKSPACE: int = Field(default=10, description="Maximum documents per workspace")
     STORAGE_DIR: str = Field(default="./storage/docs", description="Base directory for document storage")
+
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        """Enforces that production deployment fails safely if using insecure development secrets."""
+        if self.APP_ENV == "production":
+            insecure_signatures = ["insecure", "default", "replace-in-env", "secret-key", "demo"]
+            if any(sig in self.SECRET_KEY.lower() for sig in insecure_signatures) or len(self.SECRET_KEY) < 32:
+                raise ValueError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: Production mode requires a cryptographically secure, "
+                    "non-default SECRET_KEY of at least 32 characters configured via environment variable."
+                )
+        return self
 
 
 settings = Settings()

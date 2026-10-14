@@ -13,7 +13,8 @@ export interface User {
 export interface TokenResponse {
   access_token: string;
   token_type: string;
-  expires_in: number;
+  user?: User;
+  expires_in?: number;
 }
 
 export interface Workspace {
@@ -133,4 +134,21 @@ export interface RetrievalChunk {
   chunk_index: number;
   content: string;
   similarity_score: number;
+}
+
+export interface HistoryItem {
+  id: string;
+  item_type: 'qa' | 'claim';
+  title: string;
+  status: string;
+  confidence_score: number;
+  citations_count: number;
+  created_at: string;
+  summary: string;
+  details: {
+    answer?: string;
+    explanation?: string;
+    citations?: Citation[];
+    [key: string]: unknown;
+  };
 }

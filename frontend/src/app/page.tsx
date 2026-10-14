@@ -28,6 +28,10 @@ export default function Home() {
   const [isCreateWsOpen, setIsCreateWsOpen] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
 
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+
+  const triggerHistoryRefresh = () => setHistoryRefreshKey((k) => k + 1);
+
   // Load documents for active workspace
   const refreshDocuments = useCallback(async () => {
     if (!activeWorkspace) return;
@@ -67,7 +71,7 @@ export default function Home() {
     }
   }, []);
 
-  // Initialize Session
+  // Initialize Session - Strictly isolated, no silent shared demo login
   useEffect(() => {
     const initSession = async () => {
       setInitialLoading(true);
@@ -87,27 +91,10 @@ export default function Home() {
       }
 
       if (!activeUser) {
-        // Auto-demo account login for immediate seamless demonstration
-        try {
-          let tokenRes;
-          try {
-            tokenRes = await api.auth.login('demo@prooflens.ai', 'DemoSecure123!');
-          } catch {
-            try {
-              tokenRes = await api.auth.register('demo@prooflens.ai', 'DemoSecure123!', 'Dr. Evelyn Vance');
-            } catch {
-              tokenRes = await api.auth.login('demo@prooflens.ai', 'DemoSecure123!');
-            }
-          }
-          if (tokenRes?.access_token) {
-            api.setToken(tokenRes.access_token);
-            const user = await api.auth.getMe();
-            setCurrentUser(user);
-            await refreshWorkspaces();
-          }
-        } catch (demoErr) {
-          console.warn('Demo auto-login skipped; awaiting manual login:', demoErr);
-        }
+        setCurrentUser(null);
+        setWorkspaces([]);
+        setActiveWorkspace(null);
+        setDocuments([]);
       }
       setInitialLoading(false);
     };
@@ -161,7 +148,7 @@ export default function Home() {
         background: 'var(--color-canvas-gradient)',
       }}
     >
-      {/* Floating Centered Card Container (Reference: Dribbble "Cortex" Layout) */}
+      {/* Floating Centered Card Container */}
       <div className="app-shell-floating">
         {/* Left Sidebar Navigation */}
         <Sidebar
@@ -175,6 +162,7 @@ export default function Home() {
           onOpenAuth={() => setIsAuthOpen(true)}
           onLogout={handleLogout}
           documentCount={documents.length}
+          historyRefreshTrigger={historyRefreshKey}
           onNewChat={() => {
             setActiveTab('qa');
             setInitialPrompt(undefined);
@@ -195,6 +183,7 @@ export default function Home() {
             onSelectWorkspace={(ws) => setActiveWorkspace(ws)}
             documentCount={documents.length}
             onOpenUpload={() => setActiveTab('documents')}
+            onUploadSuccess={refreshDocuments}
             currentUser={currentUser}
             onOpenAuth={() => setIsAuthOpen(true)}
           />
@@ -228,6 +217,37 @@ export default function Home() {
                 <p style={{ fontSize: '12px', color: '#6B7280', marginTop: '4px' }}>
                   Verifying tenant isolation and workspace credentials
                 </p>
+              </div>
+            ) : !currentUser ? (
+              <div
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '40px',
+                  textAlign: 'center',
+                }}
+              >
+                <div
+                  className="surface-card"
+                  style={{
+                    padding: '36px',
+                    maxWidth: '460px',
+                    textAlign: 'center',
+                  }}
+                >
+                  <h2 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px', color: '#111827' }}>
+                    Welcome to ProofLens AI
+                  </h2>
+                  <p style={{ fontSize: '13px', color: '#6B7280', marginBottom: '20px', lineHeight: 1.5 }}>
+                    Sign in or register to access your strictly isolated tenant workspaces, verify document evidence, and explore 4-tier truth claims.
+                  </p>
+                  <button onClick={() => setIsAuthOpen(true)} className="btn-dark" style={{ width: '100%' }}>
+                    Sign In / Register
+                  </button>
+                </div>
               </div>
             ) : !activeWorkspace ? (
               <div
@@ -264,10 +284,13 @@ export default function Home() {
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%' }}>
                 {activeTab === 'qa' && (
                   <QAPanel
+                    key={activeWorkspace.id}
                     documents={documents}
                     workspaceId={activeWorkspace.id}
                     onOpenCitation={(c) => setActiveCitation(c)}
                     onRefreshDocuments={refreshDocuments}
+                    onQuerySuccess={triggerHistoryRefresh}
+                    initialPrompt={initialPrompt}
                     userName={getUserFirstName()}
                     onSwitchTab={(t) => setActiveTab(t)}
                   />
@@ -286,9 +309,11 @@ export default function Home() {
                 {activeTab === 'claims' && (
                   <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
                     <ClaimVerificationPanel
+                      key={activeWorkspace.id}
                       documents={documents}
                       workspaceId={activeWorkspace.id}
                       onOpenCitation={(c) => setActiveCitation(c)}
+                      onQuerySuccess={triggerHistoryRefresh}
                     />
                   </div>
                 )}

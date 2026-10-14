@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Compass,
   FolderOpen,
@@ -15,7 +15,8 @@ import {
   Layers,
   Sparkles,
 } from 'lucide-react';
-import { Workspace, User } from '@/types';
+import { Workspace, User, HistoryItem } from '@/types';
+import { api } from '@/lib/api';
 
 interface SidebarProps {
   activeTab: 'qa' | 'documents' | 'claims' | 'comparison' | 'analytics';
@@ -28,6 +29,7 @@ interface SidebarProps {
   onOpenAuth: () => void;
   onLogout: () => void;
   documentCount: number;
+  historyRefreshTrigger?: number;
   onNewChat?: () => void;
   onSelectPrompt?: (prompt: string) => void;
 }
@@ -43,51 +45,83 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenAuth,
   onLogout,
   documentCount,
+  historyRefreshTrigger,
   onNewChat,
   onSelectPrompt,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Grouped Chat History (matching Dribbble reference)
-  const historyBuckets = [
-    {
-      label: 'Today',
-      items: [
-        'Analyze Europa ice crust thickness findings',
-        'ProofLens AI 768-dim vector embedding spec',
-        'Verify 4-tier truth status on Voyager 1 launch',
-      ],
-    },
-    {
-      label: 'Yesterday',
-      items: [
-        'Summarize cross-document comparison matrix',
-        'Evaluate PyMuPDF page-level extraction bounds',
-      ],
-    },
-    {
-      label: '7 days',
-      items: [
-        'Check evidence grounding and citation validity',
-        'Audit tenant isolation on multi-user workspaces',
-        'Export Markdown investigation report with citations',
-        'Examine explicit abstention on out-of-scope query',
-      ],
-    },
-  ];
+  // Fetch real workspace history with optional server-side search query
+  useEffect(() => {
+    if (!activeWorkspace || !currentUser) {
+      setHistoryItems([]);
+      return;
+    }
 
-  const filteredBuckets = searchQuery.trim()
-    ? historyBuckets
-        .map((b) => ({
-          ...b,
-          items: b.items.filter((item) =>
-            item.toLowerCase().includes(searchQuery.toLowerCase())
-          ),
-        }))
-        .filter((b) => b.items.length > 0)
-    : historyBuckets;
+    let isMounted = true;
+    setLoadingHistory(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.history.get(activeWorkspace.id, 50, searchQuery.trim() || undefined);
+        if (isMounted) {
+          setHistoryItems(res.items as HistoryItem[]);
+        }
+      } catch (err) {
+        console.error('Failed to load history items:', err);
+      } finally {
+        if (isMounted) setLoadingHistory(false);
+      }
+    }, searchQuery ? 250 : 0);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timer);
+    };
+  }, [activeWorkspace, currentUser, searchQuery, historyRefreshTrigger]);
+
+  // Group real history items by date categories
+  const historyBuckets = useMemo(() => {
+    if (!historyItems || historyItems.length === 0) return [];
+
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const todayItems: HistoryItem[] = [];
+    const yesterdayItems: HistoryItem[] = [];
+    const sevenDaysItems: HistoryItem[] = [];
+    const olderItems: HistoryItem[] = [];
+
+    for (const item of historyItems) {
+      const itemDate = new Date(item.created_at);
+      const itemDateStr = item.created_at.slice(0, 10);
+
+      if (itemDateStr === todayStr) {
+        todayItems.push(item);
+      } else if (itemDateStr === yesterdayStr) {
+        yesterdayItems.push(item);
+      } else if (itemDate >= sevenDaysAgo) {
+        sevenDaysItems.push(item);
+      } else {
+        olderItems.push(item);
+      }
+    }
+
+    const buckets = [];
+    if (todayItems.length > 0) buckets.push({ label: 'Today', items: todayItems });
+    if (yesterdayItems.length > 0) buckets.push({ label: 'Yesterday', items: yesterdayItems });
+    if (sevenDaysItems.length > 0) buckets.push({ label: '7 days', items: sevenDaysItems });
+    if (olderItems.length > 0) buckets.push({ label: 'Older', items: olderItems });
+
+    return buckets;
+  }, [historyItems]);
 
   const navItems = [
     {
@@ -304,59 +338,70 @@ export const Sidebar: React.FC<SidebarProps> = ({
               gap: '14px',
             }}
           >
-            {filteredBuckets.map((bucket, bIdx) => (
-              <div key={bIdx}>
-                <div
-                  style={{
-                    fontSize: '11px',
-                    fontWeight: 600,
-                    color: '#9CA3AF',
-                    padding: '0 8px 6px',
-                    letterSpacing: '0.02em',
-                  }}
-                >
-                  {bucket.label}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                  {bucket.items.map((item, itemIdx) => (
-                    <button
-                      key={itemIdx}
-                      onClick={() => {
-                        setActiveTab('qa');
-                        if (onSelectPrompt) onSelectPrompt(item);
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '7px 8px',
-                        borderRadius: '8px',
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#4B5563',
-                        fontSize: '12px',
-                        textAlign: 'left',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        display: 'block',
-                        transition: 'all 120ms ease',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.backgroundColor = '#FFFFFF';
-                        e.currentTarget.style.color = '#111827';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.backgroundColor = 'transparent';
-                        e.currentTarget.style.color = '#4B5563';
-                      }}
-                      title={item}
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
+            {loadingHistory ? (
+              <div style={{ padding: '20px 8px', textAlign: 'center', fontSize: '12px', color: '#9CA3AF' }}>
+                <Clock size={16} className="animate-spin" style={{ margin: '0 auto 8px', display: 'block', color: '#7C3AED' }} />
+                Loading history...
               </div>
-            ))}
+            ) : historyBuckets.length === 0 ? (
+              <div style={{ padding: '24px 8px', textAlign: 'center', fontSize: '12px', color: '#9CA3AF' }}>
+                {searchQuery.trim() ? 'No matching investigations' : 'No saved investigations yet'}
+              </div>
+            ) : (
+              historyBuckets.map((bucket, bIdx) => (
+                <div key={bIdx}>
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: '#9CA3AF',
+                      padding: '0 8px 6px',
+                      letterSpacing: '0.02em',
+                    }}
+                  >
+                    {bucket.label}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    {bucket.items.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          setActiveTab('qa');
+                          if (onSelectPrompt) onSelectPrompt(item.title);
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '7px 8px',
+                          borderRadius: '8px',
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#4B5563',
+                          fontSize: '12px',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          display: 'block',
+                          transition: 'all 120ms ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.backgroundColor = '#FFFFFF';
+                          e.currentTarget.style.color = '#111827';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.backgroundColor = 'transparent';
+                          e.currentTarget.style.color = '#4B5563';
+                        }}
+                        title={item.title}
+                      >
+                        {item.title}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           {/* 6. Bottom User Profile Card */}

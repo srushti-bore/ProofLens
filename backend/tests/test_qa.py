@@ -286,3 +286,83 @@ def test_case_d_retrieval_failure_handling():
     assert len(ans.raw_citations) == 0
     assert "no relevant passages were retrieved" in ans.answer_text.lower()
 
+
+@pytest.mark.asyncio
+async def test_qa_answer_formatting_multi_item_and_scannability(client: AsyncClient):
+    """
+    Verify intelligent answer formatting for multi-item queries:
+    Response contains scannable bullet points with bold prefixes and section headings.
+    """
+    # 1. Register user
+    auth_res = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "formatting_user@prooflens.ai", "password": "Password123!"},
+    )
+    headers = {"Authorization": f"Bearer {auth_res.json()['access_token']}"}
+    ws_id = (await client.get("/api/v1/workspaces", headers=headers)).json()[0]["id"]
+
+    # 2. Upload document with multiple project items
+    page_content = (
+        "CANDIDATE TECHNICAL PORTFOLIO\n"
+        "Project Alpha: Distributed consensus engine using Raft algorithm in Rust.\n"
+        "Project Beta: SmartHire - AI-assisted recruitment management system.\n"
+        "Project Gamma: High-throughput Kafka message processor handling 100k events/sec."
+    )
+    pdf_bytes = create_synthetic_pdf([page_content])
+    upload_res = await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents/upload",
+        headers=headers,
+        files={"file": ("portfolio.pdf", pdf_bytes, "application/pdf")},
+    )
+    assert upload_res.status_code == 201
+
+    # 3. Ask multi-item query
+    res = await client.post(
+        f"/api/v1/workspaces/{ws_id}/qa/ask",
+        headers=headers,
+        json={"question": "What projects and findings are described in this portfolio?"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "supported"
+    ans = data["answer"]
+
+    # Verify structured formatting: headings, bullets, bold leads
+    assert "- **" in ans or "Project" in ans
+    assert "**" in ans  # Markdown bold used
+    assert len(data["citations"]) > 0
+    assert data["citations"][0]["page_number"] == 1
+    assert data["citations"][0]["is_validated"] is True
+
+
+@pytest.mark.asyncio
+async def test_qa_identity_formatting_with_bold_name(client: AsyncClient):
+    """Verify that identity queries highlight candidate name with markdown bold."""
+    auth_res = await client.post(
+        "/api/v1/auth/register",
+        json={"email": "identity_format_user@prooflens.ai", "password": "Password123!"},
+    )
+    headers = {"Authorization": f"Bearer {auth_res.json()['access_token']}"}
+    ws_id = (await client.get("/api/v1/workspaces", headers=headers)).json()[0]["id"]
+
+    resume_text = "SARAH CONNOR\nSenior Systems Architect\n10+ years experience in distributed cloud infrastructure."
+    pdf_bytes = create_synthetic_pdf([resume_text])
+    await client.post(
+        f"/api/v1/workspaces/{ws_id}/documents/upload",
+        headers=headers,
+        files={"file": ("resume_sc.pdf", pdf_bytes, "application/pdf")},
+    )
+
+    res = await client.post(
+        f"/api/v1/workspaces/{ws_id}/qa/ask",
+        headers=headers,
+        json={"question": "whose resume is this?"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "supported"
+    import re
+    assert re.search(r"\*\*sarah connor\*\*", data["answer"], re.IGNORECASE) is not None
+    assert len(data["citations"]) >= 1
+    assert data["citations"][0]["page_number"] == 1
+
