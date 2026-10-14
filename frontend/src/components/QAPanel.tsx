@@ -40,6 +40,8 @@ interface QAPanelProps {
   onSwitchTab?: (tab: 'qa' | 'documents' | 'claims' | 'comparison' | 'analytics') => void;
   initialPrompt?: string;
   onQuerySuccess?: () => void;
+  activeConversationId?: string | null;
+  onConversationChange?: (convId: string | null) => void;
 }
 
 export const QAPanel: React.FC<QAPanelProps> = ({
@@ -51,6 +53,8 @@ export const QAPanel: React.FC<QAPanelProps> = ({
   onSwitchTab,
   initialPrompt,
   onQuerySuccess,
+  activeConversationId,
+  onConversationChange,
 }) => {
   const [query, setQuery] = useState('');
   const [deeperResearch, setDeeperResearch] = useState(true);
@@ -64,6 +68,7 @@ export const QAPanel: React.FC<QAPanelProps> = ({
   // Messages stream (empty initially so user sees the Dribbble Welcome Hero)
   const [messages, setMessages] = useState<Message[]>([]);
 
+  const currentConvIdRef = useRef<string | null>(activeConversationId || null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -78,12 +83,72 @@ export const QAPanel: React.FC<QAPanelProps> = ({
   useEffect(() => {
     if (initialPrompt && initialPrompt.trim()) {
       setQuery(initialPrompt);
-    } else if (initialPrompt === undefined) {
+    } else if (initialPrompt === undefined && !activeConversationId) {
       setMessages([]);
       setQuery('');
       setError(null);
     }
-  }, [initialPrompt]);
+  }, [initialPrompt, activeConversationId]);
+
+  // Load conversation turns when activeConversationId changes
+  useEffect(() => {
+    if (activeConversationId !== currentConvIdRef.current) {
+      currentConvIdRef.current = activeConversationId || null;
+
+      if (!activeConversationId) {
+        setMessages([]);
+        return;
+      }
+
+      let isMounted = true;
+      setLoading(true);
+      setError(null);
+
+      api.conversations
+        .get(workspaceId, activeConversationId)
+        .then((detail) => {
+          if (!isMounted) return;
+          const restored: Message[] = [];
+          for (const turn of detail.turns) {
+            restored.push({
+              id: `user-${turn.query_id}`,
+              sender: 'user',
+              content: turn.question,
+              timestamp: new Date(turn.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            });
+            restored.push({
+              id: `assistant-${turn.query_id}`,
+              sender: 'assistant',
+              content: turn.answer,
+              timestamp: new Date(turn.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              qaData: {
+                query_id: turn.query_id,
+                question: turn.question,
+                answer: turn.answer,
+                status: turn.status,
+                confidence_score: turn.confidence_score,
+                retrieved_chunks_count: turn.retrieved_chunks_count,
+                citations: turn.citations || [],
+                conversation_id: detail.id,
+                conversation_title: detail.title,
+              },
+            });
+          }
+          setMessages(restored);
+        })
+        .catch((err: unknown) => {
+          if (!isMounted) return;
+          setError(err instanceof Error ? err.message : 'Failed to load conversation');
+        })
+        .finally(() => {
+          if (isMounted) setLoading(false);
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [activeConversationId, workspaceId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -114,11 +179,12 @@ export const QAPanel: React.FC<QAPanelProps> = ({
     setShowSavedPrompts(false);
 
     try {
-      // 2. Execute Grounded QA API Call
+      // 2. Execute Grounded QA API Call with activeConversationId
       const res = await api.qa.ask(
         workspaceId,
         textToSend,
-        selectedDocIds.length > 0 ? selectedDocIds : undefined
+        selectedDocIds.length > 0 ? selectedDocIds : undefined,
+        activeConversationId || undefined
       );
 
       // 3. Append Assistant Grounded Response
@@ -131,6 +197,15 @@ export const QAPanel: React.FC<QAPanelProps> = ({
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+
+      // If backend returned a conversation_id, track it and notify parent
+      if (res.conversation_id && res.conversation_id !== currentConvIdRef.current) {
+        currentConvIdRef.current = res.conversation_id;
+        if (onConversationChange) {
+          onConversationChange(res.conversation_id);
+        }
+      }
+
       if (onQuerySuccess) {
         onQuerySuccess();
       }
@@ -624,8 +699,19 @@ export const QAPanel: React.FC<QAPanelProps> = ({
                   background: '#10B981',
                 }}
               />
-              <span style={{ fontSize: '13px', fontWeight: 600, color: '#111827' }}>
-                Active Evidence Investigation
+              <span
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#111827',
+                  maxWidth: '380px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={messages.find((m) => m.qaData?.conversation_title)?.qaData?.conversation_title || 'Active Evidence Investigation'}
+              >
+                {messages.find((m) => m.qaData?.conversation_title)?.qaData?.conversation_title || 'Active Evidence Investigation'}
               </span>
               <span style={{ fontSize: '11px', color: '#9CA3AF' }}>
                 ({messages.length} messages)
@@ -633,10 +719,16 @@ export const QAPanel: React.FC<QAPanelProps> = ({
             </div>
 
             <button
-              onClick={() => setMessages([])}
+              onClick={() => {
+                setMessages([]);
+                currentConvIdRef.current = null;
+                if (onConversationChange) {
+                  onConversationChange(null);
+                }
+              }}
               className="btn-pill"
               style={{ fontSize: '11px', padding: '4px 10px' }}
-              title="Return to Welcome screen"
+              title="Start a fresh conversation"
             >
               <RotateCcw size={12} /> New Conversation
             </button>

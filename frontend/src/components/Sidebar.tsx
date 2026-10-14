@@ -1,5 +1,4 @@
 'use client';
-
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Compass,
@@ -14,8 +13,10 @@ import {
   ChevronDown,
   Layers,
   Sparkles,
+  Trash2,
+  MessageSquare,
 } from 'lucide-react';
-import { Workspace, User, HistoryItem } from '@/types';
+import { Workspace, User, ConversationSummary } from '@/types';
 import { api } from '@/lib/api';
 
 interface SidebarProps {
@@ -30,7 +31,10 @@ interface SidebarProps {
   onLogout: () => void;
   documentCount: number;
   historyRefreshTrigger?: number;
+  activeConversationId?: string | null;
   onNewChat?: () => void;
+  onSelectConversation?: (conversationId: string) => void;
+  onDeleteConversation?: (conversationId: string) => void;
   onSelectPrompt?: (prompt: string) => void;
 }
 
@@ -46,19 +50,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   documentCount,
   historyRefreshTrigger,
+  activeConversationId,
   onNewChat,
+  onSelectConversation,
+  onDeleteConversation,
   onSelectPrompt,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Fetch real workspace history with optional server-side search query
+  // Fetch real workspace persistent conversations with optional server-side search query
   useEffect(() => {
     if (!activeWorkspace || !currentUser) {
-      setHistoryItems([]);
+      setConversations([]);
       return;
     }
 
@@ -67,12 +74,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
     const timer = setTimeout(async () => {
       try {
-        const res = await api.history.get(activeWorkspace.id, 50, searchQuery.trim() || undefined);
+        const res = await api.conversations.list(activeWorkspace.id, searchQuery.trim() || undefined);
         if (isMounted) {
-          setHistoryItems(res.items as HistoryItem[]);
+          setConversations(res);
         }
       } catch (err) {
-        console.error('Failed to load history items:', err);
+        console.error('Failed to load conversations:', err);
       } finally {
         if (isMounted) setLoadingHistory(false);
       }
@@ -84,9 +91,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [activeWorkspace, currentUser, searchQuery, historyRefreshTrigger]);
 
-  // Group real history items by date categories
+  // Group persistent conversations by date categories
   const historyBuckets = useMemo(() => {
-    if (!historyItems || historyItems.length === 0) return [];
+    if (!conversations || conversations.length === 0) return [];
 
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
@@ -94,14 +101,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const yesterdayStr = yesterday.toISOString().slice(0, 10);
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const todayItems: HistoryItem[] = [];
-    const yesterdayItems: HistoryItem[] = [];
-    const sevenDaysItems: HistoryItem[] = [];
-    const olderItems: HistoryItem[] = [];
+    const todayItems: ConversationSummary[] = [];
+    const yesterdayItems: ConversationSummary[] = [];
+    const sevenDaysItems: ConversationSummary[] = [];
+    const olderItems: ConversationSummary[] = [];
 
-    for (const item of historyItems) {
-      const itemDate = new Date(item.created_at);
-      const itemDateStr = item.created_at.slice(0, 10);
+    for (const item of conversations) {
+      const dateStr = item.updated_at || item.created_at;
+      const itemDate = new Date(dateStr);
+      const itemDateStr = dateStr.slice(0, 10);
 
       if (itemDateStr === todayStr) {
         todayItems.push(item);
@@ -121,7 +129,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     if (olderItems.length > 0) buckets.push({ label: 'Older', items: olderItems });
 
     return buckets;
-  }, [historyItems]);
+  }, [conversations]);
 
   const navItems = [
     {
@@ -362,42 +370,95 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     {bucket.label}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    {bucket.items.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          setActiveTab('qa');
-                          if (onSelectPrompt) onSelectPrompt(item.title);
-                        }}
-                        style={{
-                          width: '100%',
-                          padding: '7px 8px',
-                          borderRadius: '8px',
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#4B5563',
-                          fontSize: '12px',
-                          textAlign: 'left',
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          display: 'block',
-                          transition: 'all 120ms ease',
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = '#FFFFFF';
-                          e.currentTarget.style.color = '#111827';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                          e.currentTarget.style.color = '#4B5563';
-                        }}
-                        title={item.title}
-                      >
-                        {item.title}
-                      </button>
-                    ))}
+                    {bucket.items.map((item) => {
+                      const isSelected = activeConversationId === item.id;
+                      return (
+                        <div
+                          key={item.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            borderRadius: '8px',
+                            backgroundColor: isSelected ? '#EDE9FE' : 'transparent',
+                            transition: 'all 120ms ease',
+                          }}
+                        >
+                          <button
+                            onClick={() => {
+                              setActiveTab('qa');
+                              if (onSelectConversation) {
+                                onSelectConversation(item.id);
+                              } else if (onSelectPrompt) {
+                                onSelectPrompt(item.title);
+                              }
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '7px 8px',
+                              borderRadius: '8px',
+                              background: 'transparent',
+                              border: 'none',
+                              color: isSelected ? '#7C3AED' : '#4B5563',
+                              fontWeight: isSelected ? 600 : 500,
+                              fontSize: '12px',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              display: 'block',
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.color = '#111827';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.color = '#4B5563';
+                              }
+                            }}
+                            title={item.title}
+                          >
+                            {item.title}
+                          </button>
+
+                          {onDeleteConversation && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm(`Delete conversation "${item.title}"?`)) {
+                                  onDeleteConversation(item.id);
+                                }
+                              }}
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#9CA3AF',
+                                cursor: 'pointer',
+                                padding: '4px 6px',
+                                borderRadius: '4px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                opacity: 0.6,
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.opacity = '1';
+                                e.currentTarget.style.color = '#EF4444';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.opacity = '0.6';
+                                e.currentTarget.style.color = '#9CA3AF';
+                              }}
+                              title="Delete conversation"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               ))

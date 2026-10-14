@@ -1,8 +1,3 @@
-"""
-Investigation History, Audit Trail, and Report Export API routes.
-Enables review of previous Q&A and claim verification sessions, and citation-linked export.
-"""
-
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -11,7 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.api.deps import CurrentWorkspaceDep, DBDep
 from backend.app.models.claims import ClaimVerification
-from backend.app.models.qa import Answer, QueryRun
+from backend.app.models.qa import Answer, Citation, Conversation, QueryRun
 from backend.app.schemas.history import (
     HistoryItemResponse,
     HistoryListResponse,
@@ -30,60 +25,106 @@ async def get_workspace_history(
     query: Optional[str] = Query(None, description="Search term for question, answer, claim, or explanation"),
 ) -> HistoryListResponse:
     """
-    Retrieve chronological investigation history (Q&A sessions and Claim verifications).
-    Strictly isolated to current workspace. Supports optional server-side search query.
+    Retrieve chronological investigation history (Q&A conversation threads and Claim verifications).
+    Strictly isolated to current workspace. Groups multiple turns under their persistent conversation thread.
     """
-    qa_conditions = [QueryRun.workspace_id == workspace.id]
+    items: List[HistoryItemResponse] = []
+
+    # 1. Fetch Conversations with query runs and answers
+    conv_conditions = [Conversation.workspace_id == workspace.id]
     if query and query.strip():
         search_term = f"%{query.strip()}%"
-        qa_conditions.append(
-            (QueryRun.query_text.ilike(search_term)) | (Answer.answer_text.ilike(search_term))
+        subq = (
+            select(QueryRun.conversation_id)
+            .where(
+                QueryRun.conversation_id == Conversation.id,
+                QueryRun.query_text.ilike(search_term),
+            )
+            .exists()
+        )
+        conv_conditions.append((Conversation.title.ilike(search_term)) | subq)
+
+    conv_stmt = (
+        select(Conversation)
+        .options(
+            selectinload(Conversation.query_runs)
+            .selectinload(QueryRun.answer)
+            .selectinload(Answer.citations)
+        )
+        .where(*conv_conditions)
+        .order_by(Conversation.updated_at.desc())
+        .limit(limit)
+    )
+    convs = (await db.execute(conv_stmt)).scalars().all()
+
+    for c in convs:
+        last_run = c.query_runs[-1] if c.query_runs else None
+        ans = last_run.answer if last_run else None
+        citations_list = [
+            {
+                "id": cit.id,
+                "chunk_id": cit.chunk_id,
+                "document_id": cit.document_id,
+                "document_name": cit.filename,
+                "filename": cit.filename,
+                "page_number": cit.page_number,
+                "excerpt": cit.excerpt,
+                "is_validated": cit.is_validated,
+            }
+            for cit in (ans.citations if ans else [])
+        ]
+        items.append(
+            HistoryItemResponse(
+                id=c.id,
+                item_type="qa",
+                title=c.title,
+                status=ans.status if ans else "supported",
+                confidence_score=ans.confidence_score if ans else 0.0,
+                citations_count=len(citations_list),
+                created_at=c.updated_at,
+                summary=ans.answer_text if ans else (last_run.query_text if last_run else "Conversation thread."),
+                details={
+                    "conversation_id": c.id,
+                    "message_count": len(c.query_runs),
+                    "answer": ans.answer_text if ans else "",
+                    "citations": citations_list,
+                },
+            )
         )
 
-    # 1. Fetch Q&A query runs
-    qa_stmt = (
+    # Also handle standalone/legacy query runs without conversation_id
+    legacy_conditions = [
+        QueryRun.workspace_id == workspace.id,
+        QueryRun.conversation_id == None,
+    ]
+    if query and query.strip():
+        search_term = f"%{query.strip()}%"
+        legacy_conditions.append(
+            (QueryRun.query_text.ilike(search_term)) | (Answer.answer_text.ilike(search_term))
+        )
+    legacy_stmt = (
         select(QueryRun)
         .outerjoin(Answer, QueryRun.id == Answer.query_run_id)
         .options(selectinload(QueryRun.answer).selectinload(Answer.citations))
-        .where(*qa_conditions)
+        .where(*legacy_conditions)
         .order_by(QueryRun.created_at.desc())
-        .limit(limit)
+        .limit(max(0, limit - len(items)))
     )
-    qa_runs = (await db.execute(qa_stmt)).scalars().all()
-
-    # 2. Fetch Claim verifications
-    claim_conditions = [ClaimVerification.workspace_id == workspace.id]
-    if query and query.strip():
-        search_term = f"%{query.strip()}%"
-        claim_conditions.append(
-            (ClaimVerification.claim_text.ilike(search_term)) | (ClaimVerification.explanation.ilike(search_term))
-        )
-    claim_stmt = (
-        select(ClaimVerification)
-        .options(selectinload(ClaimVerification.citations))
-        .where(*claim_conditions)
-        .order_by(ClaimVerification.created_at.desc())
-        .limit(limit)
-    )
-    claims = (await db.execute(claim_stmt)).scalars().all()
-
-    items: List[HistoryItemResponse] = []
-
-    # Map Q&A runs
-    for qr in qa_runs:
+    legacy_runs = (await db.execute(legacy_stmt)).scalars().all()
+    for qr in legacy_runs:
         ans = qr.answer
         citations_list = [
             {
-                "id": c.id,
-                "chunk_id": c.chunk_id,
-                "document_id": c.document_id,
-                "document_name": c.filename,
-                "filename": c.filename,
-                "page_number": c.page_number,
-                "excerpt": c.excerpt,
-                "is_validated": c.is_validated,
+                "id": cit.id,
+                "chunk_id": cit.chunk_id,
+                "document_id": cit.document_id,
+                "document_name": cit.filename,
+                "filename": cit.filename,
+                "page_number": cit.page_number,
+                "excerpt": cit.excerpt,
+                "is_validated": cit.is_validated,
             }
-            for c in (ans.citations if ans else [])
+            for cit in (ans.citations if ans else [])
         ]
         items.append(
             HistoryItemResponse(
@@ -101,6 +142,22 @@ async def get_workspace_history(
                 },
             )
         )
+
+    # 2. Fetch Claim verifications
+    claim_conditions = [ClaimVerification.workspace_id == workspace.id]
+    if query and query.strip():
+        search_term = f"%{query.strip()}%"
+        claim_conditions.append(
+            (ClaimVerification.claim_text.ilike(search_term)) | (ClaimVerification.explanation.ilike(search_term))
+        )
+    claim_stmt = (
+        select(ClaimVerification)
+        .options(selectinload(ClaimVerification.citations))
+        .where(*claim_conditions)
+        .order_by(ClaimVerification.created_at.desc())
+        .limit(limit)
+    )
+    claims = (await db.execute(claim_stmt)).scalars().all()
 
     # Map Claim verifications
     for cv in claims:

@@ -62,6 +62,8 @@ export interface Citation {
 export interface QAAnswer {
   id?: string;
   query_id: string;
+  conversation_id?: string;
+  conversation_title?: string;
   question?: string;
   answer: string;
   status: string;
@@ -146,9 +148,41 @@ export interface HistoryItem {
   created_at: string;
   summary: string;
   details: {
+    conversation_id?: string;
+    message_count?: number;
     answer?: string;
     explanation?: string;
     citations?: Citation[];
     [key: string]: unknown;
   };
+}
+
+export interface ConversationTurn {
+  query_id: string;
+  question: string;
+  answer: string;
+  status: string;
+  confidence_score: number;
+  retrieved_chunks_count: number;
+  citations: Citation[];
+  created_at: string;
+}
+
+export interface ConversationDetail {
+  id: string;
+  workspace_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  turns: ConversationTurn[];
+}
+
+export interface ConversationSummary {
+  id: string;
+  workspace_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  last_message_preview?: string;
 }

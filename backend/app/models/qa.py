@@ -12,6 +12,49 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.app.core.database import Base
 
 
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        index=True,
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    # Relationships
+    query_runs: Mapped[List["QueryRun"]] = relationship(
+        "QueryRun",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="QueryRun.created_at",
+    )
+
+
 class QueryRun(Base):
     __tablename__ = "query_runs"
 
@@ -33,6 +76,12 @@ class QueryRun(Base):
         nullable=False,
         index=True,
     )
+    conversation_id: Mapped[Optional[str]] = mapped_column(
+        String(36),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -41,6 +90,10 @@ class QueryRun(Base):
     )
 
     # Relationships
+    conversation: Mapped[Optional["Conversation"]] = relationship(
+        "Conversation",
+        back_populates="query_runs",
+    )
     answer: Mapped[Optional["Answer"]] = relationship(
         "Answer",
         back_populates="query_run",

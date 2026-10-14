@@ -22,6 +22,7 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<'qa' | 'documents' | 'claims' | 'comparison' | 'analytics'>('qa');
   const [activeCitation, setActiveCitation] = useState<Citation | null>(null);
   const [initialPrompt, setInitialPrompt] = useState<string | undefined>(undefined);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
   // Modals
   const [isAuthOpen, setIsAuthOpen] = useState(false);
@@ -156,16 +157,37 @@ export default function Home() {
           setActiveTab={setActiveTab}
           workspaces={workspaces}
           activeWorkspace={activeWorkspace}
-          onSelectWorkspace={(ws) => setActiveWorkspace(ws)}
+          onSelectWorkspace={(ws) => {
+            setActiveWorkspace(ws);
+            setActiveConversationId(null);
+          }}
           onCreateWorkspace={() => setIsCreateWsOpen(true)}
           currentUser={currentUser}
           onOpenAuth={() => setIsAuthOpen(true)}
           onLogout={handleLogout}
           documentCount={documents.length}
           historyRefreshTrigger={historyRefreshKey}
+          activeConversationId={activeConversationId}
           onNewChat={() => {
             setActiveTab('qa');
+            setActiveConversationId(null);
             setInitialPrompt(undefined);
+          }}
+          onSelectConversation={(convId) => {
+            setActiveConversationId(convId);
+            setActiveTab('qa');
+          }}
+          onDeleteConversation={async (convId) => {
+            if (!activeWorkspace) return;
+            try {
+              await api.conversations.delete(activeWorkspace.id, convId);
+              if (activeConversationId === convId) {
+                setActiveConversationId(null);
+              }
+              triggerHistoryRefresh();
+            } catch (e) {
+              console.error('Failed to delete conversation:', e);
+            }
           }}
           onSelectPrompt={(p) => {
             setActiveTab('qa');
@@ -293,6 +315,8 @@ export default function Home() {
                     initialPrompt={initialPrompt}
                     userName={getUserFirstName()}
                     onSwitchTab={(t) => setActiveTab(t)}
+                    activeConversationId={activeConversationId}
+                    onConversationChange={(convId) => setActiveConversationId(convId)}
                   />
                 )}
 

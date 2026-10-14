@@ -3,11 +3,13 @@ Grounded Question Answering and Citation Verification API routes.
 Connects retrieval, grounded synthesis, citation validation, and audit recording.
 """
 
+from datetime import datetime, timezone
 from fastapi import APIRouter
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.deps import CurrentUserDep, CurrentWorkspaceDep, DBDep
-from backend.app.models.qa import Answer, Citation, QueryRun
+from backend.app.models.qa import Answer, Citation, Conversation, QueryRun
 from backend.app.schemas.qa import (
     AnswerResponse,
     AskQuestionRequest,
@@ -30,12 +32,38 @@ async def ask_question(
 ) -> AnswerResponse:
     """
     Ask a natural language question grounded in the workspace's uploaded documents.
-    Retrieves evidence passages, generates an answer, validates citations, and records audit history.
+    Retrieves evidence passages, generates an answer, validates citations, and appends to persistent conversation thread.
     """
-    # 1. Record QueryRun in database
+    # 1. Resolve or create persistent conversation thread
+    conv = None
+    if request.conversation_id:
+        conv_stmt = select(Conversation).where(
+            Conversation.id == request.conversation_id,
+            Conversation.workspace_id == workspace.id,
+            Conversation.user_id == current_user.id,
+        )
+        conv = (await db.execute(conv_stmt)).scalar_one_or_none()
+
+    if not conv:
+        # Create new conversation thread using first query as title (max 80 chars)
+        clean_title = request.question.strip()
+        if len(clean_title) > 80:
+            clean_title = clean_title[:77] + "..."
+        conv = Conversation(
+            workspace_id=workspace.id,
+            user_id=current_user.id,
+            title=clean_title,
+        )
+        db.add(conv)
+        await db.flush()
+    else:
+        conv.updated_at = datetime.now(timezone.utc)
+
+    # 2. Record QueryRun in database associated with conversation
     query_run = QueryRun(
         workspace_id=workspace.id,
         user_id=current_user.id,
+        conversation_id=conv.id,
         query_text=request.question,
     )
     db.add(query_run)
@@ -119,6 +147,8 @@ async def ask_question(
 
     return AnswerResponse(
         query_id=query_run.id,
+        conversation_id=conv.id,
+        conversation_title=conv.title,
         question=request.question,
         answer=answer.answer_text,
         status=answer.status,

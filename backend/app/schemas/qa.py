@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class AskQuestionRequest(BaseModel):
     question: str = Field(min_length=1, description="Natural language question to ask over documents")
+    conversation_id: Optional[str] = Field(default=None, description="Optional active conversation thread ID to append message to")
     top_k: Optional[int] = Field(default=5, ge=1, le=20, description="Number of evidence chunks to retrieve")
     similarity_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Optional minimum similarity score")
     document_ids: Optional[List[str]] = Field(default=None, description="Optional document IDs to scope search")
@@ -52,6 +53,8 @@ class EvidenceExcerptResponse(BaseModel):
 
 class AnswerResponse(BaseModel):
     query_id: str
+    conversation_id: Optional[str] = None
+    conversation_title: Optional[str] = None
     question: str
     answer: str
     status: str  # supported, partially_supported, insufficient_evidence
@@ -60,3 +63,37 @@ class AnswerResponse(BaseModel):
     citations: List[CitationResponse] = []
     evidence_excerpts: List[EvidenceExcerptResponse] = []
     created_at: datetime
+
+
+class ConversationTurnResponse(BaseModel):
+    query_id: str
+    question: str
+    answer: str
+    status: str
+    confidence_score: float
+    retrieved_chunks_count: int
+    citations: List[CitationResponse] = []
+    created_at: datetime
+
+
+class ConversationSummaryResponse(BaseModel):
+    id: str
+    workspace_id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    message_count: int
+    last_message_preview: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationDetailResponse(BaseModel):
+    id: str
+    workspace_id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    turns: List[ConversationTurnResponse] = []
+
+    model_config = {"from_attributes": True}
