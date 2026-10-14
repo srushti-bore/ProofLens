@@ -18,8 +18,9 @@ import backend.app.models  # noqa: F401 - Register all models for metadata.creat
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan context manager for startup and shutdown events."""
-    # Ensure local storage directory exists
-    os.makedirs(settings.STORAGE_DIR, exist_ok=True)
+    # Ensure local storage directory exists only when using local storage
+    if settings.STORAGE_BACKEND == "local":
+        os.makedirs(settings.STORAGE_DIR, exist_ok=True)
     
     # In development/test mode, create tables if they don't exist
     async with engine.begin() as conn:
@@ -74,6 +75,25 @@ def create_application() -> FastAPI:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"detail": "An internal server error occurred. Please contact support."},
         )
+
+    # Root health endpoints for cloud load balancers and deployment monitors (Render/Fly/K8s)
+    @app.get("/health", tags=["Health"], include_in_schema=False)
+    async def root_health():
+        return {
+            "status": "ok",
+            "app": settings.APP_NAME,
+            "environment": settings.APP_ENV,
+            "version": "0.2.0",
+        }
+
+    @app.get("/", tags=["Health"], include_in_schema=False)
+    async def root_index():
+        return {
+            "status": "ok",
+            "app": settings.APP_NAME,
+            "version": "0.2.0",
+            "docs": f"{settings.API_V1_STR}/docs" if settings.DEBUG or settings.APP_ENV != "production" else None,
+        }
 
     # Include API routers
     app.include_router(api_v1_router, prefix=settings.API_V1_STR)

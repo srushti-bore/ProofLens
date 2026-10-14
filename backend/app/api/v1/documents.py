@@ -21,7 +21,12 @@ from backend.app.schemas.document import (
 from backend.app.services.chunking.text_chunker import chunk_document_pages
 from backend.app.services.embeddings.gemini_embedder import embedder
 from backend.app.services.ingestion.pdf_extractor import extract_pdf_pages, validate_pdf_file
-from backend.app.services.storage.local_storage import delete_document_file, save_document_file
+from backend.app.services.storage import (
+    delete_document_file,
+    is_supabase_storage,
+    read_document_file,
+    save_document_file,
+)
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/documents", tags=["Documents"])
 
@@ -214,9 +219,9 @@ async def get_document_file(
     workspace: CurrentWorkspaceDep,
     db: DBDep,
 ):
-    """Serve the raw PDF file for in-browser preview or download."""
+    """Serve the raw PDF file for in-browser preview or download from persistent storage."""
     import os
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, Response
 
     stmt = select(Document).where(
         Document.id == document_id,
@@ -225,7 +230,28 @@ async def get_document_file(
     result = await db.execute(stmt)
     document = result.scalar_one_or_none()
 
-    if not document or not document.storage_path or not os.path.exists(document.storage_path):
+    if not document or not document.storage_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document file not found",
+        )
+
+    # 1. Handle persistent Supabase Storage
+    if is_supabase_storage(document.storage_path):
+        file_bytes = read_document_file(document.storage_path)
+        if not file_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document file not found in persistent cloud storage",
+            )
+        return Response(
+            content=file_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{document.filename}"'},
+        )
+
+    # 2. Handle local filesystem storage
+    if not os.path.exists(document.storage_path):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document file not found on disk",
