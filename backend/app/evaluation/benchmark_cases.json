@@ -1,0 +1,55 @@
+[
+  {
+    "id": "CASE-01",
+    "category": "factual_retrieval",
+    "query": "What embedding model and vector dimension does ProofLens AI use?",
+    "expected_answer_keywords": ["gemini-embedding-2", "768"],
+    "expected_page": 2,
+    "should_abstain": false
+  },
+  {
+    "id": "CASE-02",
+    "category": "factual_retrieval",
+    "query": "What backend framework and database is ProofLens AI built with?",
+    "expected_answer_keywords": ["Python 3.13", "FastAPI", "PostgreSQL 18", "pgvector"],
+    "expected_page": 1,
+    "should_abstain": false
+  },
+  {
+    "id": "CASE-03",
+    "category": "abstention_test",
+    "query": "What is the quarterly revenue of Apple in fiscal year 1992 according to this document?",
+    "expected_answer_keywords": [],
+    "expected_page": null,
+    "should_abstain": true
+  },
+  {
+    "id": "CASE-04",
+    "category": "abstention_test",
+    "query": "How many autonomous drone delivery hubs are deployed in the Tokyo metropolitan area?",
+    "expected_answer_keywords": [],
+    "expected_page": null,
+    "should_abstain": true
+  },
+  {
+    "id": "CASE-05",
+    "category": "claim_verification_supported",
+    "claim": "ProofLens AI uses PyMuPDF for document extraction and preserves page-level provenance.",
+    "expected_status": "Supported",
+    "expected_page": 2
+  },
+  {
+    "id": "CASE-06",
+    "category": "claim_verification_contradicted",
+    "claim": "ProofLens AI was conceived in 1977 as an evidence-first document intelligence platform.",
+    "expected_status": "Contradicted",
+    "expected_page": 1
+  },
+  {
+    "id": "CASE-07",
+    "category": "claim_verification_insufficient",
+    "claim": "ProofLens AI has achieved ISO 9001 certification for manufacturing aerospace components.",
+    "expected_status": "Insufficient Evidence",
+    "expected_page": null
+  }
+]
