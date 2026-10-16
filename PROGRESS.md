@@ -1,8 +1,8 @@
 # ProofLens AI — Project Progress & Roadmap Status
 
 **Platform:** ProofLens AI — Evidence-First Document Intelligence Platform  
-**Current Date:** October 14, 2026  
-**Repository State:** Healthy | 24/24 Backend Tests Passing | Live Services Operational  
+**Current Date:** October 15, 2026  
+**Repository State:** Healthy | 42/42 Backend Tests Passing | Production Deployment Prepared & Verified  
 
 ---
 
@@ -26,77 +26,94 @@ Unlike generic conversational chatbots, ProofLens AI grounds all answers in retr
 | **Phase 6** | **4-Tier Claim Verification & Comparison** | **COMPLETED** | 4-tier claim statuses (`Supported`, `Partially Supported`, `Contradicted`, `Insufficient Evidence`), cross-document comparator (`doc_comparator.py`), contradiction reasoning. |
 | **Phase 7** | **Audit Trail, History & Markdown Reports** | **COMPLETED** | Workspace investigation history (`/history`), chronological Q&A and claim logs, structured Markdown report export (`/reports/export`) with download attachment. |
 | **Phase 8** | **Benchmarking & Evaluation Framework** | **COMPLETED** | Benchmark suite (`benchmark_cases.json`), automated evaluation runner (`runner.py`), metrics for retrieval recall, citation validity, and abstention accuracy. |
+| **Phase 9** | **Persistent Thread-Based Chat & Conversation History** | **COMPLETED** | ChatGPT-style multi-turn conversation threads (`Conversation` & `ChatMessage` models), sidebar thread listing, message persistence across turns, active conversation auto-attachment. |
+| **Phase 10** | **Production Cloud Deployment & Storage Architecture** | **COMPLETED** | Supabase PostgreSQL + pgvector readiness, Supabase Storage persistent PDF provider, Alembic migration pipeline, Render ASGI backend configuration, Vercel Next.js 16 deployment readiness. |
 
 ---
 
-## 3. Major Bugs Resolved & Hardening (October 2026)
+## 3. Major Enhancements & Hardening (October 2026)
 
-### 1. False Abstention on Identity / Authorship Questions
-- **Issue:** Query `"whose resume is this?"` returned `"Explicit Abstention: Evidence is insufficient or out-of-scope"` while simultaneously listing page references (`Sayali_Ingole_FrontEnd_Intern_Resume.pdf (p.1)`).
-- **Root Cause:**
-  1. Deprecated generation model (`gemini-2.5-flash`) returned `404 NOT_FOUND` on new API keys.
-  2. `HttpOptions(timeout=8.0)` passed 8.0 to the SDK which expected **milliseconds** (8 ms), triggering instant `ReadTimeout`.
-  3. Offline fallback engine tokenized `"whose resume is this?"` into stop words, producing an empty content word set, causing it to fall through without checking Page 1 resume headers.
-  4. `citation_validator.py` derived top chunks unconditionally even when `raw_citations` was empty, creating a contradictory UI state (abstaining yet citing sources).
+### 1. Independent User Registration & Authentication Isolation
+- **Issue:** Independent user accounts failed on sign-in with "Incorrect email or password", and data isolation needed strict verification across accounts.
+- **Fix:** Refactored password verification and hashing with `bcrypt`, validated email normalization (`trim().toLowerCase()`), verified database transactions, and ensured strict user and workspace tenancy mapping.
+
+### 2. AI Answer Formatting & Markdown Presentation
+- **Improvement:** Transformed long, unstructured text blocks into clean, scannable responses with bold section highlights, direct answers, bullet lists, and markdown rendering on the frontend.
+
+### 3. Persistent Thread-Based Chat History (ChatGPT Style)
+- **Problem:** Every submitted question was generating a separate history item, cluttering the sidebar and breaking conversation continuity.
 - **Fix:**
-  - Configured working models: `gemini-3.5-flash` with fallback to `gemini-3.5-flash-lite`.
-  - Corrected `HttpOptions` timeout to `15000` (15 seconds in milliseconds).
-  - Implemented identity query recognition in the fallback engine to extract verified person names from top page headers while filtering non-name documents.
-  - Updated `citation_validator.py` to strictly enforce `[]` (zero citations) whenever an answer abstains.
-  - Verified on live server: `"whose resume is this?"` -> `"This is the resume of Sayali V. Ingole."` citing Page 1.
+  - Added `Conversation` and `ChatMessage` models with foreign keys to workspaces and users.
+  - Added `/workspaces/{id}/conversations` REST endpoints (list, retrieve, delete).
+  - Updated chat runner to append subsequent questions/answers to the existing active conversation thread.
 
-### 2. Timezone Comparison TypeError in Investigation History
-- **Issue:** Endpoint `/api/v1/workspaces/{workspace_id}/history` threw `TypeError: can't compare offset-naive and offset-aware datetimes` during merged sorting of Q&A and claim history items.
-- **Fix:** Added `_to_utc()` normalizer in [history.py](file:///d:/ProofLens/backend/app/api/v1/history.py) ensuring consistent comparison regardless of database driver timezone flags.
-
-### 3. Windows PostgreSQL 18 pgvector Extension
-- **Issue:** Default Windows binary installers of PostgreSQL 18 lacked the `vector` extension.
-- **Fix:** Built `vector.dll` from pgvector source using Visual Studio 2022 C++ compiler against PostgreSQL 18 headers, deployed to `C:\Program Files\PostgreSQL\18\lib` and `share\extension`, and executed `CREATE EXTENSION IF NOT EXISTS vector;`.
+### 4. Production Cloud Deployment Readiness
+- **Database Engine & Connection Pooling:**
+  - Implemented `normalize_async_database_url()` in `database.py` to auto-translate `postgresql://` and `postgres://` to `postgresql+asyncpg://`, and `sslmode=require` to `ssl=require`.
+  - Configured `pool_pre_ping=True`, `pool_recycle=300`, `pool_size=10`, `max_overflow=20` to prevent Supabase pooler connection resets.
+- **Alembic Database Migration Pipeline:**
+  - Configured async Alembic migrations (`alembic.ini`, `alembic/env.py`, `alembic/versions/0001_initial_schema.py`).
+  - Added automatic `CREATE EXTENSION IF NOT EXISTS vector;` during migrations.
+  - Disabled automatic table creation in production mode (`main.py`) to enforce controlled migrations.
+- **Persistent PDF Storage via Supabase Storage:**
+  - Resolved Render ephemeral disk file loss.
+  - Built `SupabaseStorageProvider` (`backend/app/services/storage/supabase_storage.py`) using Supabase Storage REST API for private bucket `prooflens-documents`.
+  - Implemented unified storage coordinator (`backend/app/services/storage/__init__.py`) dispatching between `local` (dev/test) and `supabase` (production).
+  - Updated document file retrieval endpoint `GET /documents/{id}/file` to stream authenticated files from Supabase Storage.
+- **Render Backend Hardening:**
+  - Added root `/health` and `/` endpoints for Render health check probes.
+  - Resolved `pydantic-settings` `CORS_ORIGINS` crash (`JSONDecodeError: Expecting value: line 1 column 1 (char 0)`) by typing `CORS_ORIGINS` as `Union[List[str], str]` with `env_ignore_empty=True` and a custom validator supporting comma-separated strings and JSON arrays.
+- **Vercel Frontend Hardening:**
+  - Fixed root `.gitignore` to scope Python's `lib/` as `/lib/` and unignore `!frontend/src/lib/`, ensuring `frontend/src/lib/api.ts` is tracked in git.
+  - Added automatic `/api/v1` normalization to `API_BASE_URL` in `api.ts`.
+- **Environment Documentation:**
+  - Documented complete production variables and safe placeholders in `.env.example`, `backend/.env.example`, and `frontend/.env.example`.
 
 ---
 
 ## 4. Test Suite & Quality Gates
 
-All automated checks are running green:
+All automated checks are running green (42 passed):
 
 ```text
 ============================= test session starts =============================
 platform win32 -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0
 rootdir: D:\ProofLens
-collected 24 items
+collected 42 items
 
-backend\tests\test_auth.py ..                                            [  8%]
-backend\tests\test_claims_and_comparison.py ....                         [ 25%]
-backend\tests\test_documents.py ....                                     [ 41%]
-backend\tests\test_health.py .                                           [ 45%]
+backend\tests\test_auth.py ......                                        [ 14%]
+backend\tests\test_claims_and_comparison.py ....                         [ 23%]
+backend\tests\test_conversations.py .....                                [ 35%]
+backend\tests\test_documents.py ....                                     [ 45%]
+backend\tests\test_health.py ..                                          [ 50%]
 backend\tests\test_history_and_reports.py ..                             [ 54%]
-backend\tests\test_qa.py .......                                         [ 83%]
-backend\tests\test_retrieval.py ....                                     [100%]
+backend\tests\test_qa.py .......                                         [ 71%]
+backend\tests\test_retrieval.py ....                                     [ 80%]
+backend\tests\test_storage.py ....                                       [ 90%]
+backend\tests\test_users.py ....                                         [100%]
 
-======================== 24 passed in 85.42s ========================
+======================== 42 passed in 85.75s ========================
 ```
 
-### Dedicated Regression Cases (test_qa.py):
-- **Case A — Answerable Identity Question:** Verified name is extracted and cited with Page 1 (`test_case_a_answerable_identity_question`).
-- **Case B — Filename-Only Evidence:** Rejects filename as proof when contents lack identity; cleanly abstains (`test_case_b_filename_only_evidence_does_not_identify_owner`).
-- **Case C — Genuinely Insufficient Evidence:** Abstains with 0 citations when information is absent (`test_explicit_abstention_on_unsupported_question`).
-- **Case D — Retrieval Failure:** Handles 0 retrieved passages by cleanly abstaining (`test_case_d_retrieval_failure_handling`).
-- **Case E — Citation Integrity:** Rejects hallucinated chunk IDs and derives real provenance (`test_citation_validator_detects_hallucinations`).
-- **Case F — Multi-Tenant Isolation:** Enforces 403 Forbidden across workspaces (`test_qa_tenant_isolation`).
+### Frontend Production Verification:
+- `next build` passing with zero TypeScript and ESLint errors.
+- Output: Optimized static pages and partial prefetching active.
 
 ---
 
-## 5. Live Runtime Status
+## 5. Deployment Architecture Status
 
-| Service | Port / URL | Status | Health / Process |
-| :--- | :--- | :---: | :--- |
-| **PostgreSQL 18 + pgvector** | `localhost:5432` | ACTIVE | `vector 0.8.7` installed, `prooflens` database active. |
-| **FastAPI Backend** | `http://localhost:8000` | ACTIVE | Uvicorn running (Python 3.13), `/api/v1/health` status OK. |
-| **Next.js 16 Frontend** | `http://localhost:3000` | ACTIVE | Turbopack dev server ready, responsive UI active. |
+| Tier | Provider | Deployment Config | Verification Status |
+| :--- | :--- | :--- | :---: |
+| **Database** | **Supabase PostgreSQL** | `pgvector` enabled, Session/Transaction pooler (6543/5432) | VERIFIED & READY |
+| **Backend** | **Render Web Service** | Python 3.13/3.14, `uvicorn backend.app.main:app --port $PORT`, `/health` | VERIFIED & PUSHED (`2dc56bd`) |
+| **Frontend** | **Vercel** | Next.js App Router, Root Dir: `frontend`, `NEXT_PUBLIC_API_URL` | VERIFIED & READY |
+| **PDF Storage** | **Supabase Storage** | Private bucket: `prooflens-documents`, authenticated REST stream | VERIFIED & TESTED |
+| **AI Models** | **Google Gemini** | `gemini-3.5-flash` (QA) + `gemini-embedding-2` (Embeddings) | VERIFIED |
 
 ---
 
-## 6. Backlog & Next Steps
+## 6. Backlog & Future Enhancements
 
 1. **Hybrid Retrieval (RRF):** Combine Reciprocal Rank Fusion of keyword BM25 with vector similarity to boost keyword precision.
 2. **Evaluation UI:** Surface benchmark accuracy scores directly in the frontend Settings / Analytics dashboard.

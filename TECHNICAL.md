@@ -1,31 +1,37 @@
 # ProofLens AI — Technical Architecture & Engineering Documentation
 
 **Platform:** ProofLens AI  
-**Version:** 0.2.0  
-**Baseline Tech Stack:** FastAPI (Python 3.13) + Next.js 16 (React 19, TypeScript) + PostgreSQL 18 with `pgvector 0.8.7`  
+**Version:** 0.3.0  
+**Baseline Tech Stack:** FastAPI (Python 3.13/3.14) + Next.js 16 (React 19, TypeScript) + Supabase PostgreSQL with `pgvector` + Supabase Storage  
 **Governing Rules:** `AGENTS.md` (Strict Multi-Tenant Isolation, Zero Secret Leakage, Grounded Evidence Only)
 
 ---
 
 ## 1. System Architecture Overview
 
-ProofLens AI is an evidence-first document intelligence platform built as a high-performance modular monolith.
+ProofLens AI is an evidence-first document intelligence platform built as a high-performance modular monolith designed for scalable cloud deployment:
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        Next.js 16 Frontend UI                          │
 │     (App Router, TypeScript, TailwindCSS, Lucide-React, Glassmorphism)  │
 │  - Document Workspace  - Grounded Q&A  - 4-Tier Claim Verifier        │
-│  - Provenance Viewer   - Investigation Audit Trail  - Report Exporter  │
+│  - Multi-Turn Threads  - Provenance Viewer - Investigation Audit Trail │
+│  - Hosted on Vercel (Root Directory: frontend)                        │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ REST / JSON (JWT Bearer Auth)
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        FastAPI 0.115 Backend                           │
+│  (Deployed on Render Web Service, ASGI Uvicorn listening on $PORT)     │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Security & Auth: JWT, Bcrypt, Tenant Workspace Isolation Dep    │  │
 │  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ Multi-Turn Chat: Persistent Thread-Based Conversations Engine    │  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
 │  │ Ingestion & Chunking: PyMuPDF, Sliding Window (600 / 100 overlap)│  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ Unified Storage: Supabase Storage (Cloud) / Local Disk (Dev)     │  │
 │  ├──────────────────────────────────────────────────────────────────┤  │
 │  │ Embedding Engine: Gemini Embedding 2 (768-dim) + Fallback Vec    │  │
 │  ├──────────────────────────────────────────────────────────────────┤  │
@@ -38,17 +44,18 @@ ProofLens AI is an evidence-first document intelligence platform built as a high
 │  │ Claim Verifier & Comparator: 4-Tier Verification, Doc Diff Matrix│  │
 │  ├──────────────────────────────────────────────────────────────────┤  │
 │  │ History & Reporting: Chronological Timeline, Markdown Exporter   │  │
+│  ├──────────────────────────────────────────────────────────────────┤  │
+│  │ Health & Probes: /health and / endpoints for Load Balancer Probes│  │
 │  └──────────────────────────────────────────────────────────────────┘  │
-└──────────────────┬─────────────────────────────────┬───────────────────┘
-                   │                                 │
-                   ▼                                 ▼
-┌─────────────────────────────────────┐   ┌──────────────────────────────┐
-│       PostgreSQL 18 + pgvector      │   │     Google Gemini API        │
-│  - users, workspaces, members       │   │  - gemini-3.5-flash (QA)     │
-│  - documents, pages, chunks (768d)  │   │  - gemini-embedding-2 (Vec)  │
-│  - query_runs, answers, citations   │   │  - gemini-3.5-flash-lite     │
-│  - claim_verifications, citations   │   │                               │
-└─────────────────────────────────────┘   └──────────────────────────────┘
+└───────┬───────────────────────────┬────────────────────────────┬───────┘
+        │                           │                            │
+        ▼                           ▼                            ▼
+┌─────────────────────────┐  ┌───────────────────────┐  ┌───────────────────────┐
+│ Supabase PostgreSQL DB  │  │ Google Gemini AI API  │  │ Supabase Storage      │
+│ - pgvector (768-dim)    │  │ - gemini-3.5-flash    │  │ - Persistent PDF Docs │
+│ - Session/Tx Pooler     │  │ - gemini-embedding-2  │  │ - Private Bucket      │
+│ - Alembic Migrations    │  │ - gemini-3.5-fl-lite  │  │ - Authenticated REST  │
+└─────────────────────────┘  └───────────────────────┘  └───────────────────────┘
 ```
 
 ---
@@ -58,18 +65,20 @@ ProofLens AI is an evidence-first document intelligence platform built as a high
 All tables are defined in SQLAlchemy 2.0 async declarative models. Tenant ownership is enforced at the query level in data access functions—never relying on client-supplied identifiers alone.
 
 ### Core Tables
-1. **`users`**: User identity, hashed credentials, full name, timestamps.
+1. **`users`**: User identity, bcrypt-hashed credentials, full name, timestamps.
 2. **`workspaces`**: Tenant container owned by a primary user.
 3. **`workspace_members`**: RBAC membership mapping users to workspaces (`owner`, `admin`, `member`, `viewer`).
-4. **`documents`**: Document metadata, filename, MIME type, file size, SHA-256 hash, page count, storage path, status (`uploaded`, `processing`, `indexed`, `error`).
+4. **`documents`**: Document metadata, filename, MIME type, file size, SHA-256 hash, page count, storage path (`local://` or `supabase://`), status (`uploaded`, `processing`, `indexed`, `error`).
 5. **`document_pages`**: Page-level extracted text and dimensions for PDF navigation.
 6. **`document_chunks`**: Individual sliding-window text segments with foreign keys to `document_id` and `workspace_id`.
    - `embedding`: Column of type `vector(768)` indexed via pgvector.
-7. **`query_runs`**: Record of Q&A queries submitted by users per workspace.
-8. **`answers`**: Synthesized answer text, status (`supported`, `partially_supported`, `insufficient_evidence`), confidence score.
-9. **`citations`**: Validated chunk provenance references linked to answers.
-10. **`claim_verifications`**: 4-tier claim verification records (`status`, `confidence_score`, `explanation`).
-11. **`claim_citations`**: Grounding evidence passages linked to claims.
+7. **`conversations`**: Persistent multi-turn conversation threads per workspace and user.
+8. **`chat_messages`**: Ordered messages inside a conversation thread (`role`, `content`, `status`, `citations_json`).
+9. **`query_runs`**: Record of Q&A queries submitted by users per workspace.
+10. **`answers`**: Synthesized answer text, status (`supported`, `partially_supported`, `insufficient_evidence`), confidence score.
+11. **`citations`**: Validated chunk provenance references linked to answers.
+12. **`claim_verifications`**: 4-tier claim verification records (`status`, `confidence_score`, `explanation`).
+13. **`claim_citations`**: Grounding evidence passages linked to claims.
 
 ### Multi-Tenant Workspace Isolation
 Every API endpoint accesses data through the `CurrentWorkspaceDep` dependency:
@@ -82,11 +91,49 @@ async def get_current_workspace(
     # Verifies that current_user has an active membership record in workspace_id
     # Raises 403 Forbidden if not authorized.
 ```
-All retrieval, documents, chunks, and audit trail queries strictly append `WHERE workspace_id = :workspace_id`. Cross-tenant data leakage is structurally impossible.
+All retrieval, documents, chunks, conversations, and audit trail queries strictly append `WHERE workspace_id = :workspace_id`. Cross-tenant data leakage is structurally impossible.
 
 ---
 
-## 3. RAG Pipeline Implementation
+## 3. Persistent PDF Storage Architecture
+
+Render's container filesystem is ephemeral; files written to `./storage/` are discarded whenever the service restarts, scales, or redeploys. To guarantee persistence without exposing private documents:
+
+### Unified Storage Coordinator (`backend/app/services/storage/`)
+- Abstract interface: `StorageProvider` defining `save()`, `get()`, and `delete()`.
+- **Local Provider (`LocalStorageProvider`):** Writes to `./storage/docs/` with URI format `local://<rel_path>`. Used in local development and offline automated tests.
+- **Supabase Storage Provider (`SupabaseStorageProvider`):**
+  - Uploads PDF files to the private bucket `prooflens-documents` via Supabase Storage REST API (`/storage/v1/object/...`).
+  - Authenticates securely server-side using `SUPABASE_SERVICE_ROLE_KEY`.
+  - Storage URI format: `supabase://<bucket>/<rel_path>`.
+  - Document retrieval (`GET /documents/{id}/file`) transparently streams file bytes from Supabase Storage without making the bucket public.
+
+---
+
+## 4. Database Migrations & Engine Resilience
+
+### Async Database URL Normalization (`database.py`)
+Supabase connection strings provided via dashboard typically use `postgresql://` or `postgres://`. In SQLAlchemy 2.0+, `create_async_engine()` maps `postgresql://` to `psycopg` instead of `asyncpg`.
+The `normalize_async_database_url()` utility automatically:
+1. Normalizes `postgresql://` and `postgres://` to `postgresql+asyncpg://`.
+2. Translates `sslmode=require` into `ssl=require` (which `asyncpg` natively recognizes).
+
+### Supabase Connection Pooling
+Supabase serverless connection poolers (port 6543) close idle TCP sockets after a brief inactivity period. The SQLAlchemy engine is hardened with:
+- `pool_pre_ping=True`: Tests connection health before emitting queries.
+- `pool_recycle=300`: Automatically recycles connections older than 5 minutes to prevent stale sockets.
+- `pool_size=10`, `max_overflow=20`: Handles concurrent request bursts.
+
+### Alembic Migration Pipeline
+- Configuration: `alembic.ini`, `alembic/env.py`, `alembic/script.py.mako`.
+- Initial Schema (`alembic/versions/0001_initial_schema.py`):
+  - Emits `CREATE EXTENSION IF NOT EXISTS vector;` on PostgreSQL targets.
+  - Creates all 13 tables, indexes, and cascading foreign keys.
+- Production Startup Safety: In `main.py`, automatic table creation via `Base.metadata.create_all` is bypassed when `APP_ENV=production`. Render runs `alembic upgrade head` during release.
+
+---
+
+## 5. RAG Pipeline Implementation
 
 ### Step 1: Ingestion & Extraction
 - Handled in `backend/app/services/document/document_service.py`.
@@ -122,9 +169,8 @@ All retrieval, documents, chunks, and audit trail queries strictly append `WHERE
 - Handled in `backend/app/services/generation/gemini_generator.py`.
 - Structured system instructions require answers strictly grounded in delimited `<evidence_context>` passages.
 - Models attempted in order:
-  1. Configured model (if not deprecated 2.5).
-  2. `gemini-3.5-flash`
-  3. `gemini-3.5-flash-lite`
+  1. `gemini-3.5-flash`
+  2. `gemini-3.5-flash-lite`
 - Enforces JSON output schema: `answer`, `status`, `confidence_score`, `citations`.
 - **Offline / Demand Spike Fallback Engine:**
   - Evaluates query intent.
@@ -141,35 +187,13 @@ All retrieval, documents, chunks, and audit trail queries strictly append `WHERE
 
 ---
 
-## 4. 4-Tier Claim Verification Engine
+## 6. Multi-Turn Persistent Conversations Engine
 
-Handled in `backend/app/services/claims/claim_verifier.py`:
-- Evaluates individual claims against document evidence.
-- Status classification:
-  - **Supported**: Direct factual evidence proves the claim.
-  - **Partially Supported**: Core claim has partial evidence, but specific qualifications or dates are missing.
-  - **Contradicted**: Document evidence directly contradicts the statement.
-  - **Insufficient Evidence**: The available documents contain no evidence to verify or refute the claim.
-- Cross-document comparison matrix in `backend/app/services/comparison/doc_comparator.py` maps common and conflicting statements across multiple uploaded files.
-
----
-
-## 5. Investigation History & Audit Reports
-
-- History endpoint: `/api/v1/workspaces/{workspace_id}/history`
-  - Merges Q&A query runs and claim verifications into a chronological timeline.
-  - Normalizes timestamps to UTC to ensure clean cross-database sorting.
-- Report export endpoint: `/api/v1/workspaces/{workspace_id}/reports/export`
-  - Generates comprehensive Markdown audit reports with telemetry, document inventory, evidence Q&A logs, and 4-tier verification results.
-  - Supports direct browser download attachment via `?download=true`.
-
----
-
-## 6. Security, Configuration & Production Hygiene
-
-- **Zero Secret Exposure:** Configuration is managed through `backend/app/core/config.py` using `pydantic-settings`.
-- **Environment Separation:** `.env` is never checked into Git or exposed to the client. Frontend only receives public configuration; all AI calls and database transactions are server-side.
-- **Prompt Injection Defense:** Document text inside `<evidence_context>` is strictly treated as untrusted passive data. System prompts instruct the LLM never to obey instructions found within document passages.
+- Implemented in `backend/app/api/v1/conversations.py` and `backend/app/services/qa/qa_service.py`.
+- First user question in a new session creates a `Conversation` record with title auto-derived from the question.
+- Subsequent follow-ups pass `conversation_id`, which appends new user and assistant `ChatMessage` records to the active thread.
+- Context-aware synthesis injects previous conversation history into the Gemini prompt while grounding responses in current retrieved document chunks.
+- Frontend sidebar dynamically loads past threads with active selection highlighting and deletion.
 
 ---
 
@@ -177,7 +201,11 @@ Handled in `backend/app/services/claims/claim_verifier.py`:
 
 | Issue | Root Cause | Solution |
 | :--- | :--- | :--- |
-| **Windows pgvector 0.8.7** | PostgreSQL 18 Windows installer has no native pgvector bundle. | Compiled `vector.dll` via MSVC against PG 18 include headers and installed to `PostgreSQL\18\lib`. |
+| **`psycopg` Missing Error** | SQLAlchemy 2.0 defaults to `psycopg` when URL has `postgresql://`. | `normalize_async_database_url()` in `database.py` rewrites to `postgresql+asyncpg://`. |
+| **`CORS_ORIGINS` Crash on Render** | `pydantic-settings` executes `json.loads()` on `List[str]` env vars, failing on comma-separated strings (`JSONDecodeError: char 0`). | Typed as `Union[List[str], str]` with `env_ignore_empty=True` and post-validator in `config.py`. |
+| **Render Health Check 404** | Render probes `/health`, but endpoint was nested under `/api/v1/health`. | Added root-level `@app.get("/health")` and `@app.get("/")` returning `200 OK` in `main.py`. |
+| **Vercel Build Missing `api.ts`** | Root `.gitignore` had bare `lib/` rule, which accidentally ignored `frontend/src/lib/`. | Scoped Python rules to `/lib/` and `/lib64/` and explicitly added `!frontend/src/lib/`. |
+| **Vercel API URL Format Mismatch** | Deployments without trailing `/api/v1` threw 404 on API calls. | In `frontend/src/lib/api.ts`, `API_BASE_URL` auto-appends `/api/v1` if missing. |
 | **Model 404 Error** | `gemini-2.5-flash` deprecated on Google AI Studio for new keys. | Migrated to `gemini-3.5-flash` with graceful fallback to `gemini-3.5-flash-lite`. |
 | **HttpOptions Timeout** | `google.genai.types.HttpOptions.timeout` expects milliseconds, not seconds. | Configured timeout as `15000` (15,000 ms = 15s). |
 | **Contradictory Citations** | Citation validator derived fallback chunks when answer abstained. | Enforced `return []` whenever answer status is `insufficient_evidence`. |
